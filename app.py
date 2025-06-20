@@ -1,54 +1,11 @@
-from configuration import engine
+from src.configuration import engine
+from src.models import Author, Book, Genre, book_genre_association_table
 
-from sqlalchemy import ForeignKey, String, Boolean, select, func, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
-
-
-'''
-Book (id: int, title: str, author: str, is_read: bool)
-'''
+from sqlalchemy import text, select, func
+from sqlalchemy.orm import Session
 
 
-class Base(DeclarativeBase):
-    pass
 
-
-'''
-Author -> Book
-
-Assumption: One book has one author
-
-ManyToOne
-'''
-
-
-class Author(Base):
-    __tablename__ = "authors"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
-
-    books: Mapped[list["Book"]] = relationship(cascade="all, delete-orphan")
-
-    def __str__(self):
-        # return f'Author({self.id}, {self.name}, {self.books})'
-        return f'Author({self.id}, {self.name})'
-
-
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    title: Mapped[str] = mapped_column(String(50), nullable=False)
-    author: Mapped[str] = mapped_column(String(50), nullable=False)
-    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    author_id: Mapped[int] = mapped_column(ForeignKey("authors.id"))
-    author: Mapped[Author] = relationship()
-
-    def __str__(self):
-        return f'Book({self.id}, {self.title}, {self.author})'
-    
 
 
 '''
@@ -110,6 +67,46 @@ def mark_book_as_read(book_id: int):
         book.is_read = True
         session.commit()
 
+def get_or_create_genre(book_genre: str, session: Session) -> Genre:
+    genre = session.query(Genre).filter_by(name=book_genre).first()
+    if not genre:
+        genre = Genre(name=book_genre)
+        session.add(genre)
+        session.flush()
+    return genre
+
+def add_genre_to_book(book_id: int, genre_name: str):
+    with Session(engine) as session:
+        genre = get_or_create_genre(genre_name, session)
+        book = session.get(Book, book_id)
+
+        if genre not in book.genres:
+            book.genres.append(genre)
+            session.commit()
+
+"""
+Потрібно взяти автора та вивести кількість книжок по жанру
+
+select g.name, count(g.id) from genres g
+join book_genre_association bga on g.id = bga.genre_id
+join books b on bga.book_id = b.id
+join authors a on b.author_id = a.id
+where a.name = 'Daniel Anderson'
+group by
+	g.id, g.name
+"""
+
+def get_genre_statistics(author_name: str):
+    with Session(engine) as session:
+        sql = (select(Genre, func.count(Genre.id))
+            .join(book_genre_association_table, Genre.id == book_genre_association_table.c.genre_id)
+            .join(Book, book_genre_association_table.c.book_id == Book.id)
+            .join(Author, Book.author_id == Author.id)
+            .where(Author.name == author_name)
+            .group_by(Genre.id))
+        
+        return session.execute(sql).all()
+
 def main():
 
     while True:
@@ -119,9 +116,11 @@ def main():
         print("3. Порахувати кількість книжок")
         print("4. Позначити книгу прочитаною")
         print("5. Видалити автора")
-        print("6. Вийти з додатку")
+        print("6. Додати жанр до книги")
+        print("7. Показати статистику по жанрах")
+        print("8. Вийти з додатку")
 
-        choice = int(input("Оберіть дію 1-6: "))
+        choice = int(input("Оберіть дію 1-8: "))
 
         if choice == 1:
             title = input("Введіть назву книги:")
@@ -141,13 +140,21 @@ def main():
         elif choice == 5:
             author_id = int(input("Введіть id автора: "))
             delete_author(author_id)
-        
+
         elif choice == 6:
+            book_id = int(input("Введіть id книги: "))
+            genre_name = input("Введіть назву жанру: ")
+            add_genre_to_book(book_id, genre_name)
+
+        elif choice == 7:
+            author_name = input("Введіть імʼя автора: ")
+            print(get_genre_statistics(author_name))
+        
+        elif choice == 8:
             print("До побачення!")
             break
 
 if __name__ == '__main__':
-    Base.metadata.create_all(engine)
     main()
 
 
